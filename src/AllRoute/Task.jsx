@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { FaPlus } from "react-icons/fa";
+import { FaEdit, FaPlus } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import axios from "axios";
 import { useAuth } from "../Authentication/AuthProvider";
 import io from "socket.io-client";
+import { MdOutlineCancel } from "react-icons/md";
 import {
   DndContext,
   closestCenter,
@@ -23,7 +24,6 @@ const socket = io("http://localhost:5000");
 
 // Draggable task component using dnd-kit's useDraggable hook
 const DraggableTask = ({ task }) => {
-  // Use string version of MongoDB _id
   const draggableId = String(task._id);
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: draggableId,
@@ -37,7 +37,7 @@ const DraggableTask = ({ task }) => {
     padding: "0.5rem",
     marginBottom: "0.25rem",
     border: "1px solid #ccc",
-    borderRadius: "4px",
+    borderRadius: "5px",
     backgroundColor: "#fff",
   };
 
@@ -50,10 +50,7 @@ const DraggableTask = ({ task }) => {
 
 // Droppable column component using dnd-kit's useDroppable hook
 const DroppableColumn = ({ category, tasks }) => {
-  const { isOver, setNodeRef } = useDroppable({
-    id: category,
-  });
-
+  const { isOver, setNodeRef } = useDroppable({ id: category });
   const style = {
     border: "2px dashed #ccc",
     backgroundColor: isOver ? "#d3f9d8" : "#fafafa",
@@ -73,8 +70,23 @@ const DroppableColumn = ({ category, tasks }) => {
 
 const Task = () => {
   const { user } = useAuth();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const { register, handleSubmit, reset } = useForm();
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  // New states for editing
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState(null);
+
+  // react-hook-form instances for add and edit forms
+  const {
+    register: addRegister,
+    handleSubmit: handleAddSubmit,
+    reset: resetAddForm,
+  } = useForm();
+
+  const {
+    register: editRegister,
+    handleSubmit: handleEditSubmit,
+    reset: resetEditForm,
+  } = useForm();
 
   // Fetch tasks using React Query
   const { data: tasks = [], refetch } = useQuery({
@@ -93,7 +105,7 @@ const Task = () => {
   }, [refetch]);
 
   // Function to add a new task
-  const onSubmit = async (data) => {
+  const onAddSubmit = async (data) => {
     try {
       const taskData = {
         email: user?.email,
@@ -103,11 +115,50 @@ const Task = () => {
         category: "To-Do", // Default category
       };
       await axios.post("http://localhost:5000/task", taskData);
-      setIsModalOpen(false);
-      reset();
+      setIsAddModalOpen(false);
+      resetAddForm();
       refetch();
     } catch (error) {
       console.error("Error adding task:", error);
+    }
+  };
+
+  // Function to update a task (edit)
+  const onEditSubmit = async (data) => {
+    try {
+      await axios.put(`http://localhost:5000/tasks/${selectedTask._id}`, {
+        title: data.title,
+        description: data.description,
+        category: data.category,
+      });
+      setIsEditModalOpen(false);
+      setSelectedTask(null);
+      resetEditForm();
+      refetch();
+    } catch (error) {
+      console.error("Error updating task:", error);
+    }
+  };
+
+  // Function to open edit modal and pre-fill with task data
+  const handleEdit = (task) => {
+    setSelectedTask(task);
+    // Pre-fill the form with the selected task's data
+    resetEditForm({
+      title: task.title,
+      description: task.description,
+      category: task.category,
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const handleDelete = async (taskId) => {
+    try {
+      await axios.delete(`http://localhost:5000/delete/${taskId}`);
+      alert("Successfully deleted");
+      refetch();
+    } catch (error) {
+      console.log(error);
     }
   };
 
@@ -117,7 +168,6 @@ const Task = () => {
     if (!over) return; // If dropped outside a droppable area, do nothing
 
     const newCategory = over.id;
-    // Find the task using the string id
     const task = tasks.find((t) => String(t._id) === active.id);
     if (!task || task.category === newCategory) return;
 
@@ -142,29 +192,30 @@ const Task = () => {
     <div className="container mx-auto grid grid-cols-12 justify-center items-start">
       {/* Add Task Button & Modal */}
       <div className="ml-5 col-span-3">
-        <button className="btn" onClick={() => setIsModalOpen(true)}>
+        <button className="btn" onClick={() => setIsAddModalOpen(true)}>
           <FaPlus />
         </button>
-        {isModalOpen && (
+
+        {isAddModalOpen && (
           <div className="absolute bg-white shadow-lg p-4 mt-2 w-80 border rounded-md">
             <h2 className="text-lg font-bold mb-2">Add Task</h2>
-            <form onSubmit={handleSubmit(onSubmit)}>
+            <form onSubmit={handleAddSubmit(onAddSubmit)}>
               <input
                 type="text"
                 placeholder="Title"
-                {...register("title", { required: true, maxLength: 50 })}
+                {...addRegister("title", { required: true, maxLength: 50 })}
                 className="border p-2 w-full mb-2"
               />
               <textarea
                 placeholder="Description (Optional)"
-                {...register("description", { maxLength: 200 })}
+                {...addRegister("description", { maxLength: 200 })}
                 className="border p-2 w-full mb-2"
               />
               <div className="flex justify-between">
                 <button
                   type="button"
                   className="btn bg-gray-300"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => setIsAddModalOpen(false)}
                 >
                   Cancel
                 </button>
@@ -175,7 +226,84 @@ const Task = () => {
             </form>
           </div>
         )}
+
+        {/* List tasks with Edit and Delete options */}
+        {tasks?.map((task) => (
+          <div
+            className="border-2 flex flex-col mt-3 p-2 rounded-sm"
+            key={task._id}
+          >
+            <h1 className="text-xl font-bold">{task.title}</h1>
+            <div className="flex justify-between items-center">
+              <h1
+                className={`text-xl font-bold ${
+                  task.category === "To-Do"
+                    ? "text-red-500"
+                    : task.category === "In Progress"
+                    ? "text-yellow-500"
+                    : "text-green-500"
+                }`}
+              >
+                {task.category}
+              </h1>
+              <div className="flex justify-center items-center gap-3">
+                <button onClick={() => handleEdit(task)}>
+                  <FaEdit className="text-2xl" />
+                </button>
+                <button onClick={() => handleDelete(task._id)}>
+                  <MdOutlineCancel className="text-2xl text-red-600" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
+
+      {/* Edit Task Modal */}
+      {isEditModalOpen && selectedTask && (
+        <div className="absolute bg-white shadow-lg p-4 mt-2 w-80 border rounded-md">
+          <h2 className="text-lg font-bold mb-2">Edit Task</h2>
+          <form onSubmit={handleEditSubmit(onEditSubmit)}>
+            <input
+              type="text"
+              placeholder="Title"
+              {...editRegister("title", { required: true, maxLength: 50 })}
+              className="border p-2 w-full mb-2"
+            />
+            <textarea
+              placeholder="Description (Optional)"
+              {...editRegister("description", { maxLength: 200 })}
+              className="border p-2 w-full mb-2"
+            />
+            {/* Editable select for category */}
+            <select
+              {...editRegister("category", { required: true })}
+              className="border p-2 w-full mb-2"
+            >
+              {categories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+            <div className="flex justify-between">
+              <button
+                type="button"
+                className="btn bg-gray-300"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setSelectedTask(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn bg-blue-500 text-white">
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Task Columns with DnD Context */}
       <div className="col-span-9">
