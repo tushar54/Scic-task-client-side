@@ -235,9 +235,9 @@ const Task = () => {
   };
 
   return (
-    <div className="container mx-auto flex justify-center items-start gap-2">
+    <div className="container mx-auto md:flex  justify-center items-start gap-2">
       {/* Left Column: Add Task Button, Modal, and Task List */}
-      <div className="ml-5 w-3/12">
+      <div className="ml-5 md:w-3/12">
         <button className="btn" onClick={() => setIsAddModalOpen(true)}>
           <FaPlus />
         </button>
@@ -353,7 +353,7 @@ const Task = () => {
       {/* Right Column: Task Columns with DnD Context */}
       <div className="w-9/12">
         <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid md:grid-cols-3 gap-4">
             {categories.map((category) => (
               <DroppableColumn
                 key={category}
