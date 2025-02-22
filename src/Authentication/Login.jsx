@@ -11,7 +11,7 @@ const GoogleLogin = () => {
        await googleSignIn()
        .then(async(result)=>{
         const user=result.user
-        await axios.post("http://localhost:5000/user", {
+        await axios.post("https://scic-task-server-side.onrender.com/user", {
             name: user.displayName,
             email: user.email,
             imgurl: user.photoURL,

@@ -23,6 +23,7 @@ export const AuthProvider = ({ children }) => {
 
   // Google Login
   const googleSignIn = async () => {
+ 
     return signInWithPopup(auth, provider)
   };
 

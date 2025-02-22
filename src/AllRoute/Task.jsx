@@ -9,30 +9,37 @@ import { MdOutlineCancel } from "react-icons/md";
 import {
   DndContext,
   closestCenter,
-  useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
+import {
+  useSortable,
+  SortableContext,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 // Fetch tasks from the server
 const fetchTasks = async () => {
-  const res = await axios.get("http://localhost:5000/Alltask");
+  const res = await axios.get("https://scic-task-server-side.onrender.com/Alltask");
   return res.data;
 };
 
 // Create a socket connection (adjust the URL as needed)
 const socket = io("http://localhost:5000");
 
-// Draggable task component using dnd-kit's useDraggable hook
+// Sortable Draggable Task Component
 const DraggableTask = ({ task }) => {
-  const draggableId = String(task._id);
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: draggableId,
-  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: String(task._id) });
 
   const style = {
-    transform: transform
-      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
-      : undefined,
+    transform: CSS.Transform.toString(transform),
+    transition,
     cursor: "grab",
     padding: "0.5rem",
     marginBottom: "0.25rem",
@@ -48,9 +55,10 @@ const DraggableTask = ({ task }) => {
   );
 };
 
-// Droppable column component using dnd-kit's useDroppable hook
+// Droppable Column with Sortable Context
 const DroppableColumn = ({ category, tasks }) => {
-  const { isOver, setNodeRef } = useDroppable({ id: category });
+  // The droppable's id is set as the category name.
+  const { setNodeRef, isOver } = useDroppable({ id: category });
   const style = {
     border: "2px dashed #ccc",
     backgroundColor: isOver ? "#d3f9d8" : "#fafafa",
@@ -61,9 +69,11 @@ const DroppableColumn = ({ category, tasks }) => {
   return (
     <div ref={setNodeRef} id={category} style={style}>
       <h1 className="text-center border-b-2 mb-2">{category}</h1>
-      {tasks.map((task) => (
-        <DraggableTask key={String(task._id)} task={task} />
-      ))}
+      <SortableContext items={tasks.map((task) => String(task._id))}>
+        {tasks.map((task) => (
+          <DraggableTask key={String(task._id)} task={task} />
+        ))}
+      </SortableContext>
     </div>
   );
 };
@@ -71,7 +81,6 @@ const DroppableColumn = ({ category, tasks }) => {
 const Task = () => {
   const { user } = useAuth();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  // New states for editing
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
 
@@ -114,7 +123,7 @@ const Task = () => {
         timestamp: new Date().toISOString(),
         category: "To-Do", // Default category
       };
-      await axios.post("http://localhost:5000/task", taskData);
+      await axios.post("https://scic-task-server-side.onrender.com/task", taskData);
       setIsAddModalOpen(false);
       resetAddForm();
       refetch();
@@ -126,7 +135,7 @@ const Task = () => {
   // Function to update a task (edit)
   const onEditSubmit = async (data) => {
     try {
-      await axios.put(`http://localhost:5000/tasks/${selectedTask._id}`, {
+      await axios.put(`https://scic-task-server-side.onrender.com/tasks/${selectedTask._id}`, {
         title: data.title,
         description: data.description,
         category: data.category,
@@ -143,7 +152,6 @@ const Task = () => {
   // Function to open edit modal and pre-fill with task data
   const handleEdit = (task) => {
     setSelectedTask(task);
-    // Pre-fill the form with the selected task's data
     resetEditForm({
       title: task.title,
       description: task.description,
@@ -154,44 +162,82 @@ const Task = () => {
 
   const handleDelete = async (taskId) => {
     try {
-      await axios.delete(`http://localhost:5000/delete/${taskId}`);
+      await axios.delete(`https://scic-task-server-side.onrender.com/delete/${taskId}`);
       alert("Successfully deleted");
       refetch();
     } catch (error) {
-      console.log(error);
+      console.error("Error deleting task:", error);
     }
   };
 
-  // Handle drag end event: update task category when dropped in a new column
-  const handleDragEnd = async (event) => {
-    const { active, over } = event;
-    if (!over) return; // If dropped outside a droppable area, do nothing
-
-    const newCategory = over.id;
-    const task = tasks.find((t) => String(t._id) === active.id);
-    if (!task || task.category === newCategory) return;
-
-    try {
-      await axios.put(`http://localhost:5000/tasks/${active.id}`, {
-        category: newCategory,
-      });
-      // The backend emits "tasksUpdated" so refetch will update the UI.
-    } catch (error) {
-      console.error("Error updating task:", error);
-    }
-  };
-
-  // Group tasks by category for display
+  // Group tasks by category for display and sorting.
   const categories = ["To-Do", "In Progress", "Done"];
   const tasksByCategory = categories.reduce((acc, category) => {
-    acc[category] = tasks.filter((task) => task.category === category);
+    acc[category] = tasks
+      .filter((task) => task.category === category)
+      .sort((a, b) => a.order - b.order); // Assumes tasks have an 'order' field
     return acc;
   }, {});
 
+  // Revised drag-end handler
+  const handleDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over) return;
+
+    // active.id is always a task id (a stringified _id)
+    const activeId = String(active.id);
+    const activeTask = tasks.find((t) => String(t._id) === activeId);
+    if (!activeTask) return;
+
+    // If the drop target's id exists among the tasks in activeTask's category,
+    // then it is a reorder operation.
+    const currentCategoryTasks = tasksByCategory[activeTask.category] || [];
+    const currentTaskIds = currentCategoryTasks.map((t) => String(t._id));
+
+    if (currentTaskIds.includes(String(over.id))) {
+      // Reordering within the same category.
+      const oldIndex = currentCategoryTasks.findIndex(
+        (t) => String(t._id) === activeId
+      );
+      const newIndex = currentCategoryTasks.findIndex(
+        (t) => String(t._id) === String(over.id)
+      );
+      if (oldIndex === newIndex) return;
+
+      const newOrder = arrayMove(currentCategoryTasks, oldIndex, newIndex);
+      try {
+        await axios.put("https://scic-task-server-side.onrender.com/reorder", {
+          category: activeTask.category,
+          tasks: newOrder.map((task, index) => ({
+            _id: task._id,
+            order: index,
+          })),
+        });
+        refetch();
+      } catch (error) {
+        console.error("Error reordering tasks:", error);
+      }
+    } else {
+      // Otherwise, treat it as a category change.
+      // Here, over.id should be the droppable container's id (i.e. the category name).
+      const newCategory = over.id;
+      if (newCategory !== activeTask.category) {
+        try {
+          await axios.put(`https://scic-task-server-side.onrender.com/tasks/${activeId}`, {
+            category: newCategory,
+          });
+          refetch();
+        } catch (error) {
+          console.error("Error updating task category:", error);
+        }
+      }
+    }
+  };
+
   return (
-    <div className="container mx-auto grid grid-cols-12 justify-center items-start">
-      {/* Add Task Button & Modal */}
-      <div className="ml-5 col-span-3">
+    <div className="container mx-auto flex justify-center items-start gap-2">
+      {/* Left Column: Add Task Button, Modal, and Task List */}
+      <div className="ml-5 w-3/12">
         <button className="btn" onClick={() => setIsAddModalOpen(true)}>
           <FaPlus />
         </button>
@@ -227,7 +273,7 @@ const Task = () => {
           </div>
         )}
 
-        {/* List tasks with Edit and Delete options */}
+        {/* Task List with Edit and Delete Options */}
         {tasks?.map((task) => (
           <div
             className="border-2 flex flex-col mt-3 p-2 rounded-sm"
@@ -275,7 +321,6 @@ const Task = () => {
               {...editRegister("description", { maxLength: 200 })}
               className="border p-2 w-full mb-2"
             />
-            {/* Editable select for category */}
             <select
               {...editRegister("category", { required: true })}
               className="border p-2 w-full mb-2"
@@ -305,8 +350,8 @@ const Task = () => {
         </div>
       )}
 
-      {/* Task Columns with DnD Context */}
-      <div className="col-span-9">
+      {/* Right Column: Task Columns with DnD Context */}
+      <div className="w-9/12">
         <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <div className="grid grid-cols-3 gap-4">
             {categories.map((category) => (

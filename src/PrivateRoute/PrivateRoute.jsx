@@ -4,7 +4,11 @@ import { useAuth } from "../Authentication/AuthProvider";
 // eslint-disable-next-line react/prop-types
 const PrivateRoute = ({children}) => {
     
-const {user}=useAuth()
+const {user,loading}=useAuth()
+if(loading)
+{
+    return <div className="text-center">data is fetching</div>
+}
 if(user){
     return children 
 }
